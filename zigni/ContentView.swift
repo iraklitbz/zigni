@@ -14,7 +14,6 @@ struct ContentView: View {
     @State private var scrolledID: Quote.ID? = nil
     @State private var draftHolder = DraftQuote()
     @State private var hasLaunched = false
-    @State private var deletingID: Quote.ID? = nil
     @State private var cameFromBackground = false
 
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
@@ -35,12 +34,13 @@ struct ContentView: View {
                             SwipeableCard(
                                 cardWidth: geo.size.width,
                                 canSwipe: quote.id != newQuoteID,
-                                onDeleteTriggered: {
-                                    handleDelete(quote: quote, cardH: cardH)
-                                }
+                                bookTitle: quote.bookTitle
                             ) {
                                 if quote.id == newQuoteID {
-                                    EditableCardView(draft: draftHolder)
+                                    EditableCardView(
+                                        draft: draftHolder,
+                                        existingTitles: store.existingTitles.filter { !$0.isEmpty }
+                                    )
                                 } else {
                                     CardView(quote: quote)
                                         .onTapGesture {
@@ -49,8 +49,7 @@ struct ContentView: View {
                                         }
                                 }
                             }
-                            .frame(height: quote.id == deletingID ? 0 : cardH)
-                            .clipped()
+                            .frame(height: cardH)
                             .scrollTransition(
                                 .animated(.spring(duration: 0.48, bounce: 0.38))
                             ) { content, phase in
@@ -151,18 +150,6 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Borrado
-
-    private func handleDelete(quote: Quote, cardH: CGFloat) {
-        withAnimation(.spring(duration: 0.32, bounce: 0.08)) {
-            deletingID = quote.id
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            store.delete(quote)
-            deletingID = nil
-        }
-    }
-
     // MARK: - Modo creación
 
     private func enterCreateMode() {
@@ -178,10 +165,8 @@ struct ContentView: View {
         if draftHolder.isEmpty {
             store.delete(q)
         } else {
-            var saved = q
-            saved.bookTitle = draftHolder.bookTitle
-            saved.text      = draftHolder.text
-            store.update(saved)
+            store.delete(q)
+            store.mergeOrCreate(title: draftHolder.bookTitle, text: draftHolder.text)
         }
     }
 }

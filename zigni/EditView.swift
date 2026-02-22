@@ -11,11 +11,11 @@ struct EditView: View {
     @State private var draft: Quote
     let onSave: (Quote) -> Void
 
-    // Paleta (misma que CardView para consistencia)
+    // Paleta
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let titleColor  = Color(red: 0.58,  green: 0.472, blue: 0.333)
     private let quoteColor  = Color(red: 0.918, green: 0.890, blue: 0.847)
-    private let dimColor    = Color(red: 0.29,  green: 0.251, blue: 0.212)
+    private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
 
     init(quote: Quote, onSave: @escaping (Quote) -> Void) {
         _draft = State(initialValue: quote)
@@ -60,24 +60,58 @@ struct EditView: View {
                     .padding(.horizontal, 34)
                     .padding(.top, 14)
 
-                // ── Campo: texto de la cita ───────────────────────
-                TextEditor(text: $draft.text)
-                    .font(.system(size: 19, weight: .light, design: .serif))
-                    .foregroundStyle(quoteColor)
-                    .tint(titleColor)
-                    .lineSpacing(7)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .padding(.horizontal, 29)
+                // ── Pasajes (todos editables) ─────────────────────
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(draft.passages.enumerated()), id: \.element.id) { index, _ in
+                            if index > 0 {
+                                Rectangle()
+                                    .fill(titleColor.opacity(0.12))
+                                    .frame(height: 0.5)
+                                    .padding(.horizontal, 34)
+                                    .padding(.vertical, 24)
+                            }
+                            TextEditor(text: $draft.passages[index].text)
+                                .scrollDisabled(true)
+                                .font(.system(size: 19, weight: .light, design: .serif))
+                                .foregroundStyle(quoteColor)
+                                .tint(titleColor)
+                                .lineSpacing(7)
+                                .scrollContentBackground(.hidden)
+                                .background(Color.clear)
+                                .frame(minHeight: 80)
+                                .padding(.horizontal, 29)
+                        }
+                    }
                     .padding(.top, 20)
-                    .padding(.bottom, 20)
+                    .padding(.bottom, 80)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+
+            // ── Botón añadir pasaje (flota abajo a la derecha) ────
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button {
+                        draft.passages.append(Passage())
+                        draft.updatedAt = Date()
+                    } label: {
+                        Text("+")
+                            .font(.system(size: 30, weight: .ultraLight))
+                            .foregroundStyle(accentColor)
+                            .frame(width: 48, height: 48)
+                    }
+                    .padding(.bottom, 52)
+                    .padding(.trailing, 32)
+                }
             }
         }
-        // Hace que el teclado suba sin empujar la pantalla de golpe
         .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 }
 
 #Preview {
-    EditView(quote: Quote(bookTitle: "Siddhartha", text: "")) { _ in }
+    EditView(quote: Quote(bookTitle: "Siddhartha", text: "La sabiduría no puede transmitirse.")) { _ in }
 }
