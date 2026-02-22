@@ -44,6 +44,8 @@ struct CardView: View {
                     .font(.system(size: 19, weight: .light, design: .serif))
                     .foregroundStyle(quote.text.isEmpty ? emptyColor : quoteColor)
                     .lineSpacing(7)
+                    .lineLimit(5)
+                    .truncationMode(.tail)
                     .multilineTextAlignment(.leading)
                     .padding(.horizontal, 34)
                     .padding(.bottom, 46)

@@ -6,6 +6,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     @State private var store       = QuotesStore()
     @State private var editingQuote: Quote? = nil
     @State private var newQuoteID: Quote.ID? = nil
@@ -13,6 +15,7 @@ struct ContentView: View {
     @State private var draftHolder = DraftQuote()
     @State private var hasLaunched = false
     @State private var deletingID: Quote.ID? = nil
+    @State private var cameFromBackground = false
 
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
@@ -110,11 +113,29 @@ struct ContentView: View {
         }
         .ignoresSafeArea()
         .preferredColorScheme(.dark)
+        // Arranque en frío: esperamos un poco más para que el scroll esté listo
         .onAppear {
             guard !hasLaunched else { return }
             hasLaunched = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 enterCreateMode()
+            }
+        }
+        // Volver de background: siempre abre en modo creación
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background:
+                cameFromBackground = true
+            case .active:
+                guard cameFromBackground else { return }
+                cameFromBackground = false
+                // Solo si no hay ya una creación o edición en curso
+                guard newQuoteID == nil, editingQuote == nil else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    enterCreateMode()
+                }
+            default:
+                break
             }
         }
         .onChange(of: scrolledID) { _, newID in
