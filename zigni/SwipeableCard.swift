@@ -2,101 +2,194 @@
 //  SwipeableCard.swift
 //  zigni
 //
+//  Deslizar izquierda  → flip interactivo al dorso (portada + sinopsis de Google Books)
+//  Deslizar derecha    → flip de vuelta al frente
+//
 
 import SwiftUI
 
 struct SwipeableCard<Content: View>: View {
     let cardWidth: CGFloat
-    let canSwipe: Bool           // false en la tarjeta de creación activa
-    let onDeleteTriggered: () -> Void
+    let canSwipe: Bool
+    let bookTitle: String                           // para buscar en Google Books
     @ViewBuilder let content: () -> Content
 
-    @State private var dragX: CGFloat = 0
-    @State private var direction: Bool? = nil  // true=horizontal, false=vertical, nil=sin decidir
+    @State private var isFlipped: Bool = false
+    @State private var dragDegrees: Double = 0
+    @State private var gestureDirection: Bool? = nil
 
-    private var threshold: CGFloat { cardWidth * 0.55 }
-
-    // 0 = sin deslizar  /  1 = en el umbral de borrado
-    private var deleteProgress: CGFloat {
-        guard canSwipe, dragX < 0 else { return 0 }
-        return min(1.0, -dragX / threshold)
+    private var totalDegrees: Double {
+        (isFlipped ? -180.0 : 0.0) + dragDegrees
     }
+    private var showFront: Bool { abs(totalDegrees) < 90 }
 
     var body: some View {
         ZStack {
-            // ── Indicador de borrado (detrás de la tarjeta) ───────────
-            HStack {
-                Spacer()
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .light))
-                    .foregroundStyle(
-                        Color(red: 0.72, green: 0.28, blue: 0.22)
-                            .opacity(deleteProgress * 0.9)
-                    )
-                    .scaleEffect(0.35 + deleteProgress * 0.65)
-                    .padding(.trailing, 46)
-            }
-            // El padding horizontal hace que el × quede dentro del borde de la tarjeta
-            .padding(.horizontal, 18)
+            // ── Dorso: portada + sinopsis ─────────────────────────────
+            CardBack(bookTitle: bookTitle, shouldFetch: isFlipped)
+                .rotation3DEffect(
+                    .degrees(totalDegrees + 180),
+                    axis: (x: 0, y: 1, z: 0),
+                    perspective: 0.45
+                )
+                .opacity(showFront ? 0 : 1)
 
-            // ── Tarjeta ───────────────────────────────────────────────
+            // ── Frente: contenido normal ──────────────────────────────
             content()
-                // Tinte rojo muy sutil que va creciendo al acercarse al umbral
-                .overlay(alignment: .center) {
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .fill(Color(red: 0.9, green: 0.2, blue: 0.2).opacity(deleteProgress * 0.10))
-                        .padding(.horizontal, 18)
-                        .allowsHitTesting(false)
-                }
-                .offset(x: dragX)
+                .rotation3DEffect(
+                    .degrees(totalDegrees),
+                    axis: (x: 0, y: 1, z: 0),
+                    perspective: 0.45
+                )
+                .opacity(showFront ? 1 : 0)
         }
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
                 .onChanged { v in
                     guard canSwipe else { return }
-
-                    // Decidir dirección solo cuando el movimiento es inequívocamente horizontal:
-                    // el desplazamiento horizontal tiene que ser más del doble que el vertical
-                    if direction == nil {
-                        let isHorizontal = abs(v.translation.width) > abs(v.translation.height) * 2.0
-                        // Si es vertical claro, marcamos false para ignorar el resto del gesto
+                    if gestureDirection == nil {
                         if abs(v.translation.height) > abs(v.translation.width) {
-                            direction = false
-                        } else if isHorizontal {
-                            direction = true
+                            gestureDirection = false
+                        } else if abs(v.translation.width) > abs(v.translation.height) * 2.0 {
+                            gestureDirection = true
                         }
-                        // Si todavía es ambiguo, esperamos más movimiento (direction sigue nil)
                     }
-                    guard direction == true else { return }
-
-                    // Solo deslizamiento hacia la izquierda (negativo)
-                    dragX = min(0, v.translation.width)
+                    guard gestureDirection == true else { return }
+                    let raw = v.translation.width / cardWidth * 180.0
+                    dragDegrees = isFlipped ? max(0, raw) : min(0, raw)
                 }
                 .onEnded { v in
                     guard canSwipe else { return }
-                    let wasHorizontal = direction == true
-                    direction = nil
-                    guard wasHorizontal else { return }
-
-                    let pastThreshold = -dragX >= threshold
-                    let fastFling    = v.velocity.width < -650
-
-                    if pastThreshold || fastFling {
-                        // ── Borrar: vuela hacia la izquierda ──────
-                        withAnimation(.spring(duration: 0.26, bounce: 0.0)) {
-                            dragX = -(cardWidth * 2.5)
-                        }
-                        // Notificar al padre un tick después para que el vuelo sea visible
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                            onDeleteTriggered()
+                    let wasH = gestureDirection == true
+                    gestureDirection = nil
+                    guard wasH else { return }
+                    let progress = abs(dragDegrees) / 180.0
+                    let isFling  = isFlipped ? v.velocity.width > 500 : v.velocity.width < -500
+                    if progress > 0.35 || isFling {
+                        withAnimation(.spring(duration: 0.55, bounce: 0.38)) {
+                            isFlipped.toggle()
+                            dragDegrees = 0
                         }
                     } else {
-                        // ── Cancelar: rebote flubber de vuelta ────
-                        withAnimation(.spring(duration: 0.44, bounce: 0.52)) {
-                            dragX = 0
+                        withAnimation(.spring(duration: 0.44, bounce: 0.48)) {
+                            dragDegrees = 0
                         }
                     }
                 }
         )
+    }
+}
+
+// MARK: - Dorso de la tarjeta ─────────────────────────────────────────────────
+
+private struct CardBack: View {
+    let bookTitle: String
+    let shouldFetch: Bool
+
+    @State private var bookInfo: BookInfo? = nil
+    @State private var isLoading: Bool = false
+    @State private var hasLoaded: Bool = false
+
+    private let cardBG      = Color(red: 0.10,  green: 0.086, blue: 0.075)
+    private let titleColor  = Color(red: 0.58,  green: 0.472, blue: 0.333)
+    private let quoteColor  = Color(red: 0.918, green: 0.890, blue: 0.847)
+    private let emptyColor  = Color(red: 0.29,  green: 0.251, blue: 0.212)
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .fill(cardBG)
+                .padding(.horizontal, 18)
+
+            if isLoading {
+                ProgressView()
+                    .tint(titleColor)
+
+            } else if let info = bookInfo {
+                bookContent(info)
+
+            } else if hasLoaded {
+                // Buscado pero sin resultado
+                Text("sin información")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .tracking(2)
+                    .foregroundStyle(emptyColor)
+            }
+        }
+        // Arranca la búsqueda en cuanto la tarjeta se gira (shouldFetch = true)
+        .task(id: shouldFetch) {
+            guard shouldFetch, !hasLoaded, !bookTitle.isEmpty else { return }
+            isLoading = true
+            bookInfo  = await BookService.shared.fetch(title: bookTitle)
+            isLoading = false
+            hasLoaded = true
+        }
+    }
+
+    @ViewBuilder
+    private func bookContent(_ info: BookInfo) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+
+                // ── Portada ───────────────────────────────────────
+                if let url = info.coverURL {
+                    HStack {
+                        Spacer()
+                        AsyncImage(url: url) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 110, maxHeight: 160)
+                                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                    .shadow(color: .black.opacity(0.45), radius: 12, x: 0, y: 6)
+                            case .failure:
+                                EmptyView()
+                            default:
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(titleColor.opacity(0.12))
+                                    .frame(width: 80, height: 120)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .padding(.top, 40)
+                } else {
+                    Spacer().frame(height: 40)
+                }
+
+                // ── Autor ─────────────────────────────────────────
+                if !info.authors.isEmpty {
+                    Text(info.authors)
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .tracking(2.5)
+                        .textCase(.uppercase)
+                        .foregroundStyle(titleColor)
+                        .padding(.top, 22)
+                        .padding(.horizontal, 34)
+                }
+
+                // Separador
+                Rectangle()
+                    .fill(titleColor.opacity(0.18))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 34)
+                    .padding(.top, 12)
+
+                // ── Sinopsis ──────────────────────────────────────
+                if !info.description.isEmpty {
+                    Text(info.description)
+                        .font(.system(size: 14, weight: .light, design: .serif))
+                        .foregroundStyle(quoteColor.opacity(0.82))
+                        .lineSpacing(5)
+                        .padding(.top, 16)
+                        .padding(.horizontal, 34)
+                        .padding(.bottom, 44)
+                }
+            }
+        }
+        // Evita que el scroll interior robe el gesto al carrusel
+        .scrollBounceBehavior(.basedOnSize)
     }
 }

@@ -26,6 +26,7 @@ final class DraftQuote {
 // Tarjeta con campos de texto activos (modo creación inline)
 struct EditableCardView: View {
     @Bindable var draft: DraftQuote
+    var existingTitles: [String] = []
     @FocusState private var focused: Field?
 
     private let cardBG     = Color(red: 0.11,  green: 0.094, blue: 0.082)
@@ -34,6 +35,15 @@ struct EditableCardView: View {
     private let emptyColor = Color(red: 0.29,  green: 0.251, blue: 0.212)
 
     enum Field { case title, text }
+
+    // Título existente que coincide con el borrador
+    private var matchedTitle: String? {
+        let lower = draft.bookTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !lower.isEmpty else { return nil }
+        return existingTitles.first {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == lower
+        }
+    }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -60,6 +70,25 @@ struct EditableCardView: View {
                     .frame(height: 0.5)
                     .padding(.horizontal, 34)
                     .padding(.top, 14)
+
+                // ── Indicador de fusión (aparece cuando el título coincide) ──
+                if matchedTitle != nil {
+                    HStack(spacing: 6) {
+                        Rectangle()
+                            .fill(titleColor.opacity(0.30))
+                            .frame(width: 16, height: 0.5)
+                        Text("se añade a esta tarjeta")
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .tracking(1.5)
+                            .foregroundStyle(titleColor.opacity(0.55))
+                        Rectangle()
+                            .fill(titleColor.opacity(0.30))
+                            .frame(width: 16, height: 0.5)
+                    }
+                    .padding(.top, 12)
+                    .padding(.horizontal, 34)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
 
                 Spacer()
 
@@ -88,8 +117,8 @@ struct EditableCardView: View {
             }
         }
         .padding(.horizontal, 18)
+        .animation(.easeInOut(duration: 0.22), value: matchedTitle != nil)
         .onAppear {
-            // Esperamos un poco para que el scroll se asiente antes de subir el teclado
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 focused = .text
             }

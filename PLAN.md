@@ -56,7 +56,11 @@ zigni/
 
 ## Pendiente / Ideas futuras
 - [ ] Haptic feedback al hacer snap en el carrusel
-- [x] Swipe izquierda para eliminar tarjeta (sin confirmación, animación flubber)
+- [x] Swipe izquierda → flip de tarjeta (animación interactiva + spring flubber)
+- [x] Swipe derecha → flip de vuelta al frente
+- [ ] Borrado de tarjeta: pendiente de definir cómo
+- [x] Dorso: portada + sinopsis via Google Books API (gratuita, sin API key)
+- [ ] Borrado de tarjeta: pendiente de definir cómo
 - [ ] Animación de transición más elaborada al abrir EditView (expand from card)
 - [ ] Búsqueda por título o texto
 - [ ] Exportar cita como imagen (compartir)
@@ -92,12 +96,19 @@ zigni/
 ## Por dónde vamos ahora
 > Actualiza esta sección cuando retomes el trabajo.
 
-**Última sesión**: Borrado por swipe izquierdo implementado. Animación en 2 fases: tarjeta vuela a la izquierda + hueco colapsa simultáneamente. Rebote flubber si cancelas a mitad. Swipe derecho reservado para compartir.
+**Última sesión**: Swipe izquierda cambiado de borrar a flip de tarjeta. El flip es interactivo (la tarjeta gira mientras arrastras). Dorso vacío de momento. Swipe derecha vuelve al frente.
 
 **Archivos clave**:
-- `SwipeableCard.swift` → wrapper genérico de swipe (izq=borrar, der=futuro compartir)
+- `SwipeableCard.swift` → flip interactivo + spring flubber. `CardBack` privado (vacío por ahora)
 - `EditableCardView.swift` → tarjeta editable inline + `DraftQuote`
-- `ContentView.swift` → `handleDelete()` gestiona las 2 fases del borrado
+- `ContentView.swift` → sin lógica de borrado por ahora
 - `QuotesStore.swift` → `defaultQuotes` (10 citas de ejemplo)
 
-**Próximo paso**: Probar borrado en simulador. Posibles ajustes: velocidad del vuelo (`duration: 0.26`), umbral de activación (`cardWidth * 0.55`), bounce del snap-back (`bounce: 0.52`).
+**Parámetros ajustables del flip** (en `SwipeableCard.swift`):
+- Umbral de completar flip: `progress > 0.35` (línea ~68)
+- Velocidad de fling: `velocity < -500` (línea ~69)
+- Spring al completar: `.spring(duration: 0.55, bounce: 0.38)` (línea ~72)
+- Spring al cancelar: `.spring(duration: 0.44, bounce: 0.48)` (línea ~76)
+- Perspectiva 3D: `perspective: 0.45` (más bajo = más dramático)
+
+**Próximo paso**: Decidir qué va en el dorso de la tarjeta.
