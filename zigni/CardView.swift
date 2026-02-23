@@ -15,7 +15,11 @@ struct CardView: View {
     private let emptyColor  = Color(red: 0.29,  green: 0.251, blue: 0.212)
 
     private var passageText: String {
-        quote.lastPassage?.text ?? ""
+        if let fid = quote.featuredPassageID,
+           let p = quote.passages.first(where: { $0.id == fid }) {
+            return p.text
+        }
+        return quote.lastPassage?.text ?? ""
     }
 
     var body: some View {

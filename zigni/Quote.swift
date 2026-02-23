@@ -22,6 +22,7 @@ struct Quote: Identifiable, Codable {
     var bookTitle: String = ""
     var passages: [Passage] = []
     var updatedAt: Date  = Date()
+    var featuredPassageID: UUID? = nil
 
     // Accesos rápidos
     var lastPassage: Passage?  { passages.last }
@@ -55,7 +56,7 @@ struct Quote: Identifiable, Codable {
 
     // ── Codable: migración desde formato antiguo (text: String) ───────
     enum CodingKeys: String, CodingKey {
-        case id, bookTitle, passages, updatedAt
+        case id, bookTitle, passages, updatedAt, featuredPassageID
         case legacyText      = "text"
         case legacyCreatedAt = "createdAt"
     }
@@ -76,6 +77,7 @@ struct Quote: Identifiable, Codable {
         } else {
             passages = []
         }
+        featuredPassageID = try c.decodeIfPresent(UUID.self, forKey: .featuredPassageID)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -84,5 +86,6 @@ struct Quote: Identifiable, Codable {
         try c.encode(bookTitle, forKey: .bookTitle)
         try c.encode(passages,  forKey: .passages)
         try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encodeIfPresent(featuredPassageID, forKey: .featuredPassageID)
     }
 }
