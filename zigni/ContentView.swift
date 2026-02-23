@@ -6,15 +6,12 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
-
     @State private var store       = QuotesStore()
     @State private var editingQuote: Quote? = nil
     @State private var newQuoteID: Quote.ID? = nil
     @State private var scrolledID: Quote.ID? = nil
     @State private var draftHolder = DraftQuote()
     @State private var hasLaunched = false
-    @State private var cameFromBackground = false
     @State private var focusNewTitle = false
 
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
@@ -119,23 +116,6 @@ struct ContentView: View {
             hasLaunched = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 enterCreateMode()
-            }
-        }
-        // Volver de background: siempre abre en modo creación
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background:
-                cameFromBackground = true
-            case .active:
-                guard cameFromBackground else { return }
-                cameFromBackground = false
-                // Solo si no hay ya una creación o edición en curso
-                guard newQuoteID == nil, editingQuote == nil else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    enterCreateMode()
-                }
-            default:
-                break
             }
         }
         .onChange(of: scrolledID) { _, newID in
