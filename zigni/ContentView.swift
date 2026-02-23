@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var draftHolder = DraftQuote()
     @State private var hasLaunched = false
     @State private var cameFromBackground = false
+    @State private var focusNewTitle = false
 
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
@@ -90,12 +91,12 @@ struct ContentView: View {
                 .allowsHitTesting(false)
 
                 // ── Botón "+" ─────────────────────────────────────────
-                if newQuoteID == nil {
+                if newQuoteID == nil && editingQuote == nil {
                     VStack {
                         Spacer()
                         HStack {
                             Spacer()
-                            Button { enterCreateMode() } label: {
+                            Button { enterCreateMode(focusTitle: true) } label: {
                                 Text("+")
                                     .font(.system(size: 30, weight: .ultraLight))
                                     .foregroundStyle(accentColor)
@@ -142,21 +143,28 @@ struct ContentView: View {
             commitOrDelete(id: createID)
         }
         .sheet(item: $editingQuote) { quote in
-            EditView(quote: quote) { updated in store.update(updated) }
-                .presentationBackground(bgColor)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
-                .presentationCornerRadius(28)
+            EditView(quote: quote, focusOnAppear: focusNewTitle) { updated in
+                let titleEmpty = updated.bookTitle.trimmingCharacters(in: .whitespaces).isEmpty
+                let passagesEmpty = updated.passages.allSatisfy { $0.text.trimmingCharacters(in: .whitespaces).isEmpty }
+                if titleEmpty && passagesEmpty {
+                    store.delete(updated)
+                } else {
+                    store.update(updated)
+                }
+            }
+            .presentationBackground(bgColor)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.hidden)
+            .presentationCornerRadius(28)
         }
     }
 
     // MARK: - Modo creación
 
-    private func enterCreateMode() {
-        draftHolder.reset()
+    private func enterCreateMode(focusTitle: Bool = false) {
+        focusNewTitle = focusTitle
         let q = store.addQuote()
-        newQuoteID = q.id
-        withAnimation(.spring(duration: 0.5)) { scrolledID = q.id }
+        editingQuote = q
     }
 
     private func commitOrDelete(id: Quote.ID) {
