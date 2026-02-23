@@ -29,8 +29,11 @@ struct EditView: View {
     private let quoteColor  = Color(red: 0.918, green: 0.890, blue: 0.847)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
 
-    // ── Modo selección ────────────────────────────────────────────────
-    @State private var selectedPassageID: UUID? = nil
+    // ── Teclado ───────────────────────────────────────────────────────
+    @State private var keyboardVisible = false
+
+    // ── Modo selección (multi) ─────────────────────────────────────────
+    @State private var selectedPassageIDs: Set<UUID> = []
     @State private var dragOffset: [UUID: CGFloat] = [:]
     @State private var showDeleteConfirm = false
 
@@ -54,11 +57,11 @@ struct EditView: View {
                 // ── Barra superior ────────────────────────────────────
                 HStack {
                     Spacer()
-                    if selectedPassageID != nil {
-                        // OK reemplaza "listo" en modo selección
+                    if !selectedPassageIDs.isEmpty {
+                        // Modo selección → ok
                         Button {
                             withAnimation(.spring(duration: 0.3)) {
-                                selectedPassageID = nil
+                                selectedPassageIDs.removeAll()
                                 showDeleteConfirm = false
                             }
                         } label: {
@@ -72,8 +75,27 @@ struct EditView: View {
                         }
                         .padding(.trailing, 34)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
-                    } else {
+                    } else if keyboardVisible {
+                        // Teclado visible → bajar teclado
                         Button {
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                        } label: {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                                .font(.system(size: 15, weight: .light))
+                                .foregroundStyle(bgColor)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(titleColor))
+                        }
+                        .padding(.trailing, 34)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    } else {
+                        // Reposo → listo
+                        Button {
+                            removeEmptyPassages()
                             onSave(draft)
                             dismiss()
                         } label: {
@@ -88,7 +110,8 @@ struct EditView: View {
                 }
                 .frame(height: 36)
                 .padding(.top, 58)
-                .animation(.spring(duration: 0.3), value: selectedPassageID)
+                .animation(.spring(duration: 0.3), value: selectedPassageIDs.isEmpty)
+                .animation(.spring(duration: 0.3), value: keyboardVisible)
 
                 // ── Campo: título del libro ───────────────────────────
                 TextField("título del libro", text: $draft.bookTitle)
@@ -98,7 +121,7 @@ struct EditView: View {
                     .foregroundStyle(titleColor)
                     .tint(titleColor)
                     .focused($titleFocused)
-                    .disabled(selectedPassageID != nil)
+                    .disabled(!selectedPassageIDs.isEmpty)
                     .padding(.top, 28)
                     .padding(.horizontal, 34)
 
@@ -117,7 +140,6 @@ struct EditView: View {
                                     .fill(titleColor.opacity(0.12))
                                     .frame(height: 0.5)
                                     .padding(.horizontal, 34)
-                                    .padding(.vertical, 24)
                             }
                             passageRow(passage: passage, index: index)
                         }
@@ -132,7 +154,7 @@ struct EditView: View {
             }
 
             // ── Botón añadir pasaje ───────────────────────────────────
-            if selectedPassageID == nil && reorderingID == nil {
+            if selectedPassageIDs.isEmpty && reorderingID == nil {
                 VStack {
                     Spacer()
                     HStack {
@@ -154,7 +176,7 @@ struct EditView: View {
             }
 
             // ── Notch de eliminar ─────────────────────────────────────
-            if selectedPassageID != nil {
+            if !selectedPassageIDs.isEmpty {
                 VStack {
                     Spacer()
                     deleteNotch
@@ -162,8 +184,14 @@ struct EditView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(duration: 0.35), value: selectedPassageID)
+        .animation(.spring(duration: 0.35), value: selectedPassageIDs.isEmpty)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+            keyboardVisible = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardVisible = false
+        }
         .onAppear {
             guard focusOnAppear else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -176,7 +204,7 @@ struct EditView: View {
 
     @ViewBuilder
     private func passageRow(passage: Passage, index: Int) -> some View {
-        let isSelected   = selectedPassageID == passage.id
+        let isSelected   = selectedPassageIDs.contains(passage.id)
         let isReordering = reorderingID == passage.id
         let xOffset      = dragOffset[passage.id] ?? 0
         let isDragging   = xOffset != 0
@@ -198,16 +226,23 @@ struct EditView: View {
                     accentColor.opacity(0.07)
                 }
 
+                // Tinte reordenación — color del botón ok
+                if isReordering {
+                    titleColor.opacity(0.12)
+                }
+
                 // Radio button + texto en HStack
                 // El radio button siempre ocupa su espacio (no hay reflow al seleccionar)
                 HStack(alignment: .center, spacing: 20) {
-                    // Texto (read-only mientras arrastra/seleccionado, editable en reposo)
-                    if isSelected || isDragging {
+                    // Texto: Text estático solo cuando el view se mueve físicamente
+                    // (UITextView no sigue el offset de SwiftUI).
+                    // En selección se mantiene TextEditor pero deshabilitado → misma altura siempre.
+                    if isDragging || isReordering {
                         Text(passage.text.isEmpty ? " " : passage.text)
                             .font(.system(size: 19, weight: .light, design: .serif))
                             .foregroundStyle(quoteColor)
                             .lineSpacing(7)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                     } else {
                         TextEditor(text: $draft.passages[index].text)
@@ -218,7 +253,9 @@ struct EditView: View {
                             .lineSpacing(7)
                             .scrollContentBackground(.hidden)
                             .background(Color.clear)
+                            .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity)
+                            .disabled(!selectedPassageIDs.isEmpty)
                     }
 
                     // Radio button: visible solo cuando seleccionado
@@ -245,7 +282,6 @@ struct EditView: View {
         .frame(maxWidth: .infinity)
         // Reorder
         .scaleEffect(isReordering ? 1.02 : 1.0)
-        .shadow(color: isReordering ? accentColor.opacity(0.2) : .clear, radius: 10)
         .offset(y: isReordering ? reorderDragY : 0)
         .background(
             GeometryReader { geo in
@@ -260,7 +296,6 @@ struct EditView: View {
             DragGesture(minimumDistance: 10)
                 .onChanged { value in
                     guard reorderingID == nil else { return }
-                    guard selectedPassageID == nil || selectedPassageID == passage.id else { return }
                     if value.translation.width < 0 {
                         dragOffset[passage.id] = value.translation.width
                     }
@@ -268,17 +303,19 @@ struct EditView: View {
                 .onEnded { _ in
                     guard reorderingID == nil else { return }
                     let offset = dragOffset[passage.id] ?? 0
-                    if selectedPassageID == passage.id {
+                    if isSelected {
+                        // Ya seleccionado → deseleccionar
                         haptic(.soft)
                         withAnimation(.spring(duration: 0.3)) {
-                            selectedPassageID = nil
-                            showDeleteConfirm = false
+                            selectedPassageIDs.remove(passage.id)
+                            if selectedPassageIDs.isEmpty { showDeleteConfirm = false }
                         }
-                    } else if selectedPassageID == nil && offset < -threshold {
+                    } else if offset < -threshold {
+                        // Swipe suficiente → añadir a selección
                         haptic(.soft)
+                        removeEmptyPassages(except: passage.id)
                         withAnimation(.spring(duration: 0.3)) {
-                            selectedPassageID = passage.id
-                            draft.featuredPassageID = passage.id
+                            selectedPassageIDs.insert(passage.id)
                             showDeleteConfirm = false
                         }
                     }
@@ -288,10 +325,11 @@ struct EditView: View {
                 }
         )
         .simultaneousGesture(
-            reorderingID == nil && selectedPassageID == nil
+            reorderingID == nil && selectedPassageIDs.isEmpty
             ? LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
-                    haptic(.medium)
+                    haptic(.soft)
+                    removeEmptyPassages(except: passage.id)
                     withAnimation(.spring(duration: 0.3)) {
                         reorderingID = passage.id
                         reorderDragY = 0
@@ -300,20 +338,20 @@ struct EditView: View {
             : nil
         )
         .simultaneousGesture(
-            reorderingID == passage.id
-            ? DragGesture()
+            DragGesture(minimumDistance: 0)
                 .onChanged { value in
+                    guard reorderingID == passage.id else { return }
                     reorderDragY = value.translation.height
                     checkReorderCrossing(for: passage)
                 }
                 .onEnded { _ in
-                    haptic(.soft)
+                    guard reorderingID == passage.id else { return }
+                    haptic(.medium)
                     withAnimation(.spring(duration: 0.3)) {
                         reorderingID = nil
                         reorderDragY = 0
                     }
                 }
-            : nil
         )
         .zIndex(isReordering ? 1 : 0)
         .animation(.spring(duration: 0.3), value: isSelected)
@@ -334,7 +372,7 @@ struct EditView: View {
                         .foregroundStyle(quoteColor.opacity(0.85))
 
                     Button {
-                        deleteSelectedPassage()
+                        deleteSelectedPassages()
                     } label: {
                         Text("Eliminar")
                             .font(.system(size: 12, weight: .regular, design: .monospaced))
@@ -353,17 +391,47 @@ struct EditView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
             }
 
-            // El notch en sí
-            Button {
-                withAnimation(.spring(duration: 0.25)) {
-                    showDeleteConfirm.toggle()
+            // El notch en sí — píldora con uno o dos botones
+            HStack(spacing: 0) {
+                // Marcar como portada — solo visible con exactamente 1 seleccionado
+                if selectedPassageIDs.count == 1 {
+                    let featuredID  = selectedPassageIDs.first!
+                    // Refleja la misma lógica que CardView:
+                    // si no hay featured explícito, el último pasaje es el que se muestra
+                    let isFeatured  = draft.featuredPassageID == featuredID
+                                   || (draft.featuredPassageID == nil && draft.passages.last?.id == featuredID)
+                    Button {
+                        haptic(.soft)
+                        withAnimation(.spring(duration: 0.25)) {
+                            draft.featuredPassageID = isFeatured ? nil : featuredID
+                        }
+                    } label: {
+                        Image(systemName: isFeatured ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 17, weight: .light))
+                            .foregroundStyle(isFeatured ? titleColor : titleColor.opacity(0.55))
+                            .frame(width: 64, height: 46)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+
+                    Rectangle()
+                        .fill(titleColor.opacity(0.15))
+                        .frame(width: 0.5, height: 26)
+                        .transition(.opacity)
                 }
-            } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 17, weight: .light))
-                    .foregroundStyle(showDeleteConfirm ? Color.red.opacity(0.5) : Color.red)
-                    .frame(width: 64, height: 46)
+
+                // Eliminar
+                Button {
+                    withAnimation(.spring(duration: 0.25)) {
+                        showDeleteConfirm.toggle()
+                    }
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 17, weight: .light))
+                        .foregroundStyle(showDeleteConfirm ? Color.red.opacity(0.5) : Color.red)
+                        .frame(width: 64, height: 46)
+                }
             }
+            .animation(.spring(duration: 0.3), value: selectedPassageIDs.count == 1)
             .background(
                 RoundedRectangle(cornerRadius: 23)
                     .fill(cardBg)
@@ -375,15 +443,14 @@ struct EditView: View {
 
     // MARK: - Helpers
 
-    private func deleteSelectedPassage() {
-        guard let id = selectedPassageID else { return }
+    private func deleteSelectedPassages() {
         haptic(.rigid)
         withAnimation(.spring(duration: 0.3)) {
-            draft.passages.removeAll { $0.id == id }
-            if draft.featuredPassageID == id {
+            draft.passages.removeAll { selectedPassageIDs.contains($0.id) }
+            if let featured = draft.featuredPassageID, selectedPassageIDs.contains(featured) {
                 draft.featuredPassageID = nil
             }
-            selectedPassageID = nil
+            selectedPassageIDs.removeAll()
             showDeleteConfirm = false
         }
     }
@@ -404,6 +471,12 @@ struct EditView: View {
                 }
                 break
             }
+        }
+    }
+
+    private func removeEmptyPassages(except keepID: UUID? = nil) {
+        draft.passages.removeAll {
+            $0.id != keepID && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
