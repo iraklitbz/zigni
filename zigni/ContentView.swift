@@ -18,6 +18,9 @@ struct ContentView: View {
     @State private var flippedCardID: Quote.ID? = nil   // qué tarjeta está girada
     @State private var expandedCardID: Quote.ID? = nil  // qué tarjeta está expandida a pantalla completa
 
+    // ── Modo edición ──────────────────────────────────────────────────
+    @State private var editingIsNew = false
+
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
 
@@ -48,6 +51,8 @@ struct ContentView: View {
                                     CardView(quote: quote)
                                         .onTapGesture {
                                             if let id = newQuoteID { commitOrDelete(id: id) }
+                                            editingIsNew = false
+                                            focusNewTitle = false
                                             editingQuote = quote
                                         }
                                 }
@@ -137,7 +142,7 @@ struct ContentView: View {
             guard !hasLaunched else { return }
             hasLaunched = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                enterCreateMode()
+                enterCreateMode(focusTitle: true)
             }
         }
         // Cuando una tarjeta se gira al dorso → esperamos a que el flip 3D casi termine
@@ -161,7 +166,7 @@ struct ContentView: View {
             commitOrDelete(id: createID)
         }
         .sheet(item: $editingQuote) { quote in
-            EditView(quote: quote, focusOnAppear: focusNewTitle) { updated in
+            EditView(quote: quote, focusOnAppear: focusNewTitle, isNewQuote: editingIsNew) { updated in
                 let titleEmpty = updated.bookTitle.trimmingCharacters(in: .whitespaces).isEmpty
                 let passagesEmpty = updated.passages.allSatisfy { $0.text.trimmingCharacters(in: .whitespaces).isEmpty }
                 if titleEmpty && passagesEmpty {
@@ -174,6 +179,9 @@ struct ContentView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(28)
+            .onDisappear {
+                focusNewTitle = false
+            }
         }
     }
 
@@ -190,6 +198,7 @@ struct ContentView: View {
 
     private func enterCreateMode(focusTitle: Bool = false) {
         focusNewTitle = focusTitle
+        editingIsNew = true
         let q = store.addQuote()
         editingQuote = q
     }
