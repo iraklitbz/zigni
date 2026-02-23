@@ -86,6 +86,7 @@ struct EditView: View {
                         .transition(.opacity)
                     }
                 }
+                .frame(height: 36)
                 .padding(.top, 58)
                 .animation(.spring(duration: 0.3), value: selectedPassageID)
 
@@ -178,52 +179,74 @@ struct EditView: View {
         let isSelected   = selectedPassageID == passage.id
         let isReordering = reorderingID == passage.id
         let xOffset      = dragOffset[passage.id] ?? 0
-        // Cuando hay offset activo o está seleccionada, mostramos Text (SwiftUI nativo)
-        // para que el offset/transform funcione correctamente (UITextView no sigue transforms).
         let isDragging   = xOffset != 0
+        let threshold    = UIScreen.main.bounds.width * 0.20
 
+        // ── Exterior fijo: sombra color titleColor (nunca se mueve) ──────
+        // ── Interior deslizante: bgColor cubre la sombra en reposo ───────
         ZStack(alignment: .leading) {
+            // Sombra fija — mismo color que el botón ok
+            titleColor
 
-            // ── Fondo de selección ────────────────────────────────────
-            if isSelected {
-                // Fondo
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(accentColor.opacity(0.08))
-                    .padding(.horizontal, 24)
-                // Borde izquierdo — separado para no romper el padding del fondo
-                Rectangle()
-                    .fill(accentColor)
-                    .frame(width: 2)
-                    .padding(.leading, 24)
-            }
+            // Interior deslizante
+            ZStack(alignment: .leading) {
+                // Mismo color que pantalla → invisible en reposo
+                bgColor
 
-            // ── Contenido de texto ────────────────────────────────────
-            // Cuando está seleccionada o deslizando: Text nativo (sigue el offset sin glitches).
-            // En reposo: TextEditor editable.
-            if isSelected || isDragging {
-                Text(passage.text.isEmpty ? " " : passage.text)
-                    .font(.system(size: 19, weight: .light, design: .serif))
-                    .foregroundStyle(quoteColor)
-                    .lineSpacing(7)
-                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
-                    .padding(.leading, isSelected ? 42 : 29)   // aire extra desde el borde izquierdo
-                    .padding(.trailing, 29)
-                    .padding(.vertical, 10)
-                    .contentShape(Rectangle())
-            } else {
-                TextEditor(text: $draft.passages[index].text)
-                    .scrollDisabled(true)
-                    .font(.system(size: 19, weight: .light, design: .serif))
-                    .foregroundStyle(quoteColor)
-                    .tint(titleColor)
-                    .lineSpacing(7)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.clear)
-                    .frame(minHeight: 80)
-                    .padding(.horizontal, 29)
+                // Tinte sutil de selección
+                if isSelected {
+                    accentColor.opacity(0.07)
+                }
+
+                // Radio button + texto en HStack
+                // El radio button siempre ocupa su espacio (no hay reflow al seleccionar)
+                HStack(alignment: .center, spacing: 20) {
+                    // Texto (read-only mientras arrastra/seleccionado, editable en reposo)
+                    if isSelected || isDragging {
+                        Text(passage.text.isEmpty ? " " : passage.text)
+                            .font(.system(size: 19, weight: .light, design: .serif))
+                            .foregroundStyle(quoteColor)
+                            .lineSpacing(7)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .contentShape(Rectangle())
+                    } else {
+                        TextEditor(text: $draft.passages[index].text)
+                            .scrollDisabled(true)
+                            .font(.system(size: 19, weight: .light, design: .serif))
+                            .foregroundStyle(quoteColor)
+                            .tint(titleColor)
+                            .lineSpacing(7)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.clear)
+                            .frame(maxWidth: .infinity)
+                    }
+
+                    // Radio button: visible solo cuando seleccionado
+                    ZStack {
+                        Circle()
+                            .stroke(accentColor, lineWidth: 1.5)
+                            .frame(width: 18, height: 18)
+                        Circle()
+                            .fill(accentColor)
+                            .frame(width: 9, height: 9)
+                    }
+                    .opacity(isSelected ? 1 : 0)
+                    .scaleEffect(isSelected ? 1 : 0.1, anchor: .center)
+                    .animation(.spring(duration: 0.35, bounce: 0.3), value: isSelected)
+                    .frame(width: 18)
+                }
+                .padding(.leading, 34)
+                .padding(.trailing, 24)
+                .padding(.vertical, 10)
             }
+            .frame(maxWidth: .infinity, minHeight: 80)
+            .offset(x: xOffset)
         }
-        // Capturar frame ANTES del offset (posición de layout real)
+        .frame(maxWidth: .infinity)
+        // Reorder
+        .scaleEffect(isReordering ? 1.02 : 1.0)
+        .shadow(color: isReordering ? accentColor.opacity(0.2) : .clear, radius: 10)
+        .offset(y: isReordering ? reorderDragY : 0)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(
@@ -232,16 +255,11 @@ struct EditView: View {
                 )
             }
         )
-        .scaleEffect(isReordering ? 1.02 : 1.0)
-        .shadow(color: isReordering ? accentColor.opacity(0.15) : .clear, radius: 8)
-        // Un solo offset para swipe horizontal + reorder vertical
-        .offset(x: xOffset, y: isReordering ? reorderDragY : 0)
         // ── Gestos ───────────────────────────────────────────────────
         .gesture(
             DragGesture(minimumDistance: 10)
                 .onChanged { value in
                     guard reorderingID == nil else { return }
-                    // Permitir swipe solo si: nada seleccionado, o esta misma frase está seleccionada
                     guard selectedPassageID == nil || selectedPassageID == passage.id else { return }
                     if value.translation.width < 0 {
                         dragOffset[passage.id] = value.translation.width
@@ -251,13 +269,12 @@ struct EditView: View {
                     guard reorderingID == nil else { return }
                     let offset = dragOffset[passage.id] ?? 0
                     if selectedPassageID == passage.id {
-                        // Swipe sobre la frase ya seleccionada → deseleccionar
                         haptic(.soft)
                         withAnimation(.spring(duration: 0.3)) {
                             selectedPassageID = nil
                             showDeleteConfirm = false
                         }
-                    } else if selectedPassageID == nil && offset < -50 {
+                    } else if selectedPassageID == nil && offset < -threshold {
                         haptic(.soft)
                         withAnimation(.spring(duration: 0.3)) {
                             selectedPassageID = passage.id
