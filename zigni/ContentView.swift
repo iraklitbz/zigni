@@ -6,16 +6,20 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
-
     @State private var store       = QuotesStore()
     @State private var editingQuote: Quote? = nil
     @State private var newQuoteID: Quote.ID? = nil
     @State private var scrolledID: Quote.ID? = nil
     @State private var draftHolder = DraftQuote()
     @State private var hasLaunched = false
-    @State private var cameFromBackground = false
     @State private var focusNewTitle = false
+
+    // ── Flip / expansión del dorso ────────────────────────────────────
+    @State private var flippedCardID: Quote.ID? = nil   // qué tarjeta está girada
+    @State private var expandedCardID: Quote.ID? = nil  // qué tarjeta está expandida a pantalla completa
+
+    // ── Modo edición ──────────────────────────────────────────────────
+    @State private var editingIsNew = false
 
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
@@ -35,7 +39,8 @@ struct ContentView: View {
                             SwipeableCard(
                                 cardWidth: geo.size.width,
                                 canSwipe: quote.id != newQuoteID,
-                                bookTitle: quote.bookTitle
+                                bookTitle: quote.bookTitle,
+                                isFlipped: flipBinding(for: quote.id)
                             ) {
                                 if quote.id == newQuoteID {
                                     EditableCardView(
@@ -46,6 +51,8 @@ struct ContentView: View {
                                     CardView(quote: quote)
                                         .onTapGesture {
                                             if let id = newQuoteID { commitOrDelete(id: id) }
+                                            editingIsNew = false
+                                            focusNewTitle = false
                                             editingQuote = quote
                                         }
                                 }
@@ -90,6 +97,23 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+                // ── Dorso expandido a pantalla completa ───────────────
+                if let eid = expandedCardID,
+                   let eq  = store.quotes.first(where: { $0.id == eid }) {
+                    ExpandedCardBack(bookTitle: eq.bookTitle) {
+                        withAnimation(.spring(duration: 0.55, bounce: 0.3)) {
+                            flippedCardID  = nil
+                            expandedCardID = nil
+                        }
+                    }
+                    .ignoresSafeArea()
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.88, anchor: .center).combined(with: .opacity),
+                        removal:   .scale(scale: 0.88, anchor: .bottom).combined(with: .opacity)
+                    ))
+                    .zIndex(10)
+                }
+
                 // ── Botón "+" ─────────────────────────────────────────
                 if newQuoteID == nil && editingQuote == nil {
                     VStack {
@@ -118,24 +142,23 @@ struct ContentView: View {
             guard !hasLaunched else { return }
             hasLaunched = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                enterCreateMode()
+                enterCreateMode(focusTitle: true)
             }
         }
-        // Volver de background: siempre abre en modo creación
-        .onChange(of: scenePhase) { _, phase in
-            switch phase {
-            case .background:
-                cameFromBackground = true
-            case .active:
-                guard cameFromBackground else { return }
-                cameFromBackground = false
-                // Solo si no hay ya una creación o edición en curso
-                guard newQuoteID == nil, editingQuote == nil else { return }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    enterCreateMode()
+        // Cuando una tarjeta se gira al dorso → esperamos a que el flip 3D casi termine
+        // y entonces expandimos a pantalla completa
+        .onChange(of: flippedCardID) { _, newID in
+            if let newID {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                    guard flippedCardID == newID else { return }
+                    withAnimation(.spring(duration: 0.48, bounce: 0.22)) {
+                        expandedCardID = newID
+                    }
                 }
-            default:
-                break
+            } else {
+                withAnimation(.spring(duration: 0.38)) {
+                    expandedCardID = nil
+                }
             }
         }
         .onChange(of: scrolledID) { _, newID in
@@ -143,7 +166,7 @@ struct ContentView: View {
             commitOrDelete(id: createID)
         }
         .sheet(item: $editingQuote) { quote in
-            EditView(quote: quote, focusOnAppear: focusNewTitle) { updated in
+            EditView(quote: quote, focusOnAppear: focusNewTitle, isNewQuote: editingIsNew) { updated in
                 let titleEmpty = updated.bookTitle.trimmingCharacters(in: .whitespaces).isEmpty
                 let passagesEmpty = updated.passages.allSatisfy { $0.text.trimmingCharacters(in: .whitespaces).isEmpty }
                 if titleEmpty && passagesEmpty {
@@ -156,13 +179,26 @@ struct ContentView: View {
             .presentationDetents([.large])
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(28)
+            .onDisappear {
+                focusNewTitle = false
+            }
         }
+    }
+
+    // MARK: - Flip binding
+
+    private func flipBinding(for id: Quote.ID) -> Binding<Bool> {
+        Binding(
+            get: { flippedCardID == id },
+            set: { flippedCardID = $0 ? id : nil }
+        )
     }
 
     // MARK: - Modo creación
 
     private func enterCreateMode(focusTitle: Bool = false) {
         focusNewTitle = focusTitle
+        editingIsNew = true
         let q = store.addQuote()
         editingQuote = q
     }

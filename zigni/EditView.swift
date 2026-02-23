@@ -5,6 +5,7 @@
 
 import SwiftUI
 import UIKit
+import VisionKit
 
 // MARK: - Preference key para capturar frames de cada passage
 private struct PassageFrameKey: PreferenceKey {
@@ -19,7 +20,9 @@ struct EditView: View {
 
     @State private var draft: Quote
     @FocusState private var titleFocused: Bool
+    @FocusState private var focusedPassageID: UUID?
     let focusOnAppear: Bool
+    let isNewQuote: Bool
     let onSave: (Quote) -> Void
 
     // Paleta
@@ -31,6 +34,14 @@ struct EditView: View {
 
     // ── Teclado ───────────────────────────────────────────────────────
     @State private var keyboardVisible = false
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var clipboardText: String? = nil
+
+    // ── Escáner de cámara ─────────────────────────────────────────────
+    @State private var showScanner = false
+
+    // ── Geometría ─────────────────────────────────────────────────────
+    @State private var screenWidth: CGFloat = 390
 
     // ── Modo selección (multi) ─────────────────────────────────────────
     @State private var selectedPassageIDs: Set<UUID> = []
@@ -42,10 +53,25 @@ struct EditView: View {
     @State private var reorderDragY: CGFloat = 0
     @State private var passageFrames: [UUID: CGRect] = [:]
 
-    init(quote: Quote, focusOnAppear: Bool = false, onSave: @escaping (Quote) -> Void) {
+    init(quote: Quote, focusOnAppear: Bool = false, isNewQuote: Bool = false, onSave: @escaping (Quote) -> Void) {
         _draft = State(initialValue: quote)
         self.focusOnAppear = focusOnAppear
+        self.isNewQuote = isNewQuote
         self.onSave = onSave
+    }
+
+    private var focusedPassageIsEmpty: Bool {
+        guard let id = focusedPassageID else { return true }
+        return draft.passages.first(where: { $0.id == id })?
+            .text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+    }
+
+    private func dismissEditing() {
+        focusedPassageID = nil
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
     }
 
     var body: some View {
@@ -56,7 +82,25 @@ struct EditView: View {
 
                 // ── Barra superior ────────────────────────────────────
                 HStack {
+                    // Cámara — solo cuando hay un pasaje enfocado y está vacío
+                    if selectedPassageIDs.isEmpty && DataScannerViewController.isSupported
+                        && focusedPassageID != nil && focusedPassageIsEmpty {
+                        Button { showScanner = true } label: {
+                            Image(systemName: "camera")
+                                .font(.system(size: 15, weight: .light))
+                                .foregroundStyle(titleColor)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(Capsule().fill(titleColor.opacity(0.10)))
+                        }
+                        .padding(.leading, 34)
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    } else {
+                        Spacer().frame(width: 34)
+                    }
+
                     Spacer()
+
                     if !selectedPassageIDs.isEmpty {
                         // Modo selección → ok
                         Button {
@@ -103,15 +147,24 @@ struct EditView: View {
                                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                                 .tracking(2)
                                 .foregroundStyle(titleColor)
+                                .padding(.vertical, 10)
+                                .padding(.horizontal, 16)
                         }
-                        .padding(.trailing, 34)
+                        .padding(.trailing, 18)
                         .transition(.opacity)
                     }
                 }
                 .frame(height: 36)
                 .padding(.top, 58)
+                .contentShape(Rectangle())
+                .onTapGesture { dismissEditing() }
                 .animation(.spring(duration: 0.3), value: selectedPassageIDs.isEmpty)
                 .animation(.spring(duration: 0.3), value: keyboardVisible)
+
+                Color.clear
+                    .frame(height: 18)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissEditing() }
 
                 // ── Campo: título del libro ───────────────────────────
                 TextField("título del libro", text: $draft.bookTitle)
@@ -147,10 +200,31 @@ struct EditView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 120)
                 }
+                .coordinateSpace(name: "passageScroll")
                 .scrollBounceBehavior(.basedOnSize)
                 .onPreferenceChange(PassageFrameKey.self) { frames in
                     passageFrames = frames
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            let point = value.location
+                            let hitPassage = passageFrames.values.contains { $0.contains(point) }
+                            guard !hitPassage else { return }
+                            dismissEditing()
+                        }
+                )
+            }
+
+            // ── Barra de pegar (clipboard) ────────────────────────────
+            if let clip = clipboardText, keyboardVisible, focusedPassageIsEmpty {
+                VStack {
+                    Spacer()
+                    pasteBar(clip)
+                }
+                .padding(.bottom, keyboardHeight)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .animation(.spring(duration: 0.35), value: clipboardText != nil)
             }
 
             // ── Botón añadir pasaje ───────────────────────────────────
@@ -160,8 +234,13 @@ struct EditView: View {
                     HStack {
                         Spacer()
                         Button {
-                            draft.passages.append(Passage())
+                            let newPassage = Passage()
+                            draft.passages.append(newPassage)
                             draft.updatedAt = Date()
+                            let newID = newPassage.id
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                focusedPassageID = newID
+                            }
                         } label: {
                             Text("+")
                                 .font(.system(size: 30, weight: .ultraLight))
@@ -186,17 +265,35 @@ struct EditView: View {
         }
         .animation(.spring(duration: 0.35), value: selectedPassageIDs.isEmpty)
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { screenWidth = $0 }
+        .fullScreenCover(isPresented: $showScanner) {
+            DataScannerView { scanned in
+                showScanner = false
+                handleScannedText(scanned)
+            }
+            .ignoresSafeArea()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { n in
+            if let frame = n.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                keyboardHeight = frame.height
+            }
             keyboardVisible = true
+            if isNewQuote { checkClipboard() }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardHeight = 0
             keyboardVisible = false
+            withAnimation(.spring(duration: 0.3)) { clipboardText = nil }
         }
         .onAppear {
-            guard focusOnAppear else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                titleFocused = true
+            if focusOnAppear {
+                if draft.passages.isEmpty { draft.passages.append(Passage()) }
+                let firstID = draft.passages.first?.id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    focusedPassageID = firstID
+                }
             }
+            // Sin UITextView en el árbol al abrir (swap Text/TextEditor) → sin auto-focus.
         }
     }
 
@@ -208,7 +305,7 @@ struct EditView: View {
         let isReordering = reorderingID == passage.id
         let xOffset      = dragOffset[passage.id] ?? 0
         let isDragging   = xOffset != 0
-        let threshold    = UIScreen.main.bounds.width * 0.20
+        let threshold    = screenWidth * 0.20
 
         // ── Exterior fijo: sombra color titleColor (nunca se mueve) ──────
         // ── Interior deslizante: bgColor cubre la sombra en reposo ───────
@@ -234,17 +331,10 @@ struct EditView: View {
                 // Radio button + texto en HStack
                 // El radio button siempre ocupa su espacio (no hay reflow al seleccionar)
                 HStack(alignment: .center, spacing: 20) {
-                    // Texto: Text estático solo cuando el view se mueve físicamente
-                    // (UITextView no sigue el offset de SwiftUI).
-                    // En selección se mantiene TextEditor pero deshabilitado → misma altura siempre.
-                    if isDragging || isReordering {
-                        Text(passage.text.isEmpty ? " " : passage.text)
-                            .font(.system(size: 19, weight: .light, design: .serif))
-                            .foregroundStyle(quoteColor)
-                            .lineSpacing(7)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                    } else {
+                    let isFocused = focusedPassageID == passage.id
+
+                    ZStack(alignment: .leading) {
+                        // TextEditor siempre en el árbol para que el focus funcione.
                         TextEditor(text: $draft.passages[index].text)
                             .scrollDisabled(true)
                             .font(.system(size: 19, weight: .light, design: .serif))
@@ -254,8 +344,21 @@ struct EditView: View {
                             .scrollContentBackground(.hidden)
                             .background(Color.clear)
                             .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity)
-                            .disabled(!selectedPassageIDs.isEmpty)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .focused($focusedPassageID, equals: passage.id)
+                            .opacity(isFocused && !isDragging && !isReordering ? 1 : 0.01)
+                            .allowsHitTesting(isFocused && !isDragging && !isReordering)
+
+                        if !isFocused || isDragging || isReordering {
+                            // Modo lectura / drag / reorder: Text visible encima
+                            Text(passage.text.isEmpty ? " " : passage.text)
+                                .font(.system(size: 19, weight: .light, design: .serif))
+                                .foregroundStyle(quoteColor)
+                                .lineSpacing(7)
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
 
                     // Radio button: visible solo cuando seleccionado
@@ -280,6 +383,7 @@ struct EditView: View {
             .offset(x: xOffset)
         }
         .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
         // Reorder
         .scaleEffect(isReordering ? 1.02 : 1.0)
         .offset(y: isReordering ? reorderDragY : 0)
@@ -287,20 +391,28 @@ struct EditView: View {
             GeometryReader { geo in
                 Color.clear.preference(
                     key: PassageFrameKey.self,
-                    value: [passage.id: geo.frame(in: .global)]
+                    value: [passage.id: geo.frame(in: .named("passageScroll"))]
                 )
             }
         )
         // ── Gestos ───────────────────────────────────────────────────
-        .gesture(
+        .onTapGesture {
+            guard focusedPassageID != passage.id else { return }
+            guard selectedPassageIDs.isEmpty && reorderingID == nil else { return }
+            guard !isDragging && !isReordering else { return }
+            focusedPassageID = passage.id
+        }
+        .simultaneousGesture(
             DragGesture(minimumDistance: 10)
                 .onChanged { value in
+                    guard focusedPassageID == nil else { return }
                     guard reorderingID == nil else { return }
                     if value.translation.width < 0 {
                         dragOffset[passage.id] = value.translation.width
                     }
                 }
                 .onEnded { _ in
+                    guard focusedPassageID == nil else { return }
                     guard reorderingID == nil else { return }
                     let offset = dragOffset[passage.id] ?? 0
                     if isSelected {
@@ -319,16 +431,15 @@ struct EditView: View {
                             showDeleteConfirm = false
                         }
                     }
-                    withAnimation(.spring(duration: 0.4, bounce: 0.5)) {
+                    withAnimation(.spring(duration: 0.3, bounce: 0)) {
                         dragOffset[passage.id] = 0
                     }
                 }
         )
         .simultaneousGesture(
-            reorderingID == nil && selectedPassageIDs.isEmpty
+            reorderingID == nil && selectedPassageIDs.isEmpty && focusedPassageID == nil
             ? LongPressGesture(minimumDuration: 0.4)
                 .onEnded { _ in
-                    haptic(.soft)
                     removeEmptyPassages(except: passage.id)
                     withAnimation(.spring(duration: 0.3)) {
                         reorderingID = passage.id
@@ -338,7 +449,8 @@ struct EditView: View {
             : nil
         )
         .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
+            reorderingID == passage.id
+            ? DragGesture(minimumDistance: 0)
                 .onChanged { value in
                     guard reorderingID == passage.id else { return }
                     reorderDragY = value.translation.height
@@ -352,6 +464,7 @@ struct EditView: View {
                         reorderDragY = 0
                     }
                 }
+            : nil
         )
         .zIndex(isReordering ? 1 : 0)
         .animation(.spring(duration: 0.3), value: isSelected)
@@ -443,6 +556,64 @@ struct EditView: View {
 
     // MARK: - Helpers
 
+    @ViewBuilder
+    private func pasteBar(_ text: String) -> some View {
+        HStack(spacing: 12) {
+            Text(text)
+                .font(.system(size: 12, weight: .light, design: .serif))
+                .foregroundStyle(quoteColor.opacity(0.55))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.paste(_:)),
+                    to: nil, from: nil, for: nil
+                )
+                withAnimation(.spring(duration: 0.25)) { clipboardText = nil }
+            } label: {
+                Text("pegar")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .tracking(1.5)
+                    .foregroundStyle(bgColor)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(titleColor))
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(cardBg)
+                .shadow(color: .black.opacity(0.3), radius: 10, y: -2)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 8)
+    }
+
+    private func handleScannedText(_ scanned: String) {
+        let trimmed = scanned.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Si hay un pasaje enfocado y vacío → rellenarlo; si no → nuevo pasaje
+        if let fid = focusedPassageID,
+           let idx = draft.passages.firstIndex(where: { $0.id == fid }),
+           draft.passages[idx].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft.passages[idx].text = trimmed
+        } else {
+            draft.passages.append(Passage(text: trimmed))
+        }
+    }
+
+    private func checkClipboard() {
+        let text = (UIPasteboard.general.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let valid = !text.isEmpty && text.contains(where: { $0.isLetter })
+        withAnimation(.spring(duration: 0.35)) {
+            clipboardText = valid ? text : nil
+        }
+    }
+
     private func deleteSelectedPassages() {
         haptic(.rigid)
         withAnimation(.spring(duration: 0.3)) {
@@ -491,4 +662,37 @@ struct EditView: View {
 
 #Preview {
     EditView(quote: Quote(bookTitle: "Siddhartha", text: "La sabiduría no puede transmitirse.")) { _ in }
+}
+
+// MARK: - DataScanner (VisionKit)
+
+private struct DataScannerView: UIViewControllerRepresentable {
+    let onRecognized: (String) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onRecognized: onRecognized) }
+
+    func makeUIViewController(context: Context) -> DataScannerViewController {
+        let vc = DataScannerViewController(
+            recognizedDataTypes: [.text()],
+            qualityLevel: .accurate,
+            recognizesMultipleItems: true,
+            isHighlightingEnabled: true
+        )
+        vc.delegate = context.coordinator
+        try? vc.startScanning()
+        return vc
+    }
+
+    func updateUIViewController(_ vc: DataScannerViewController, context: Context) {}
+
+    class Coordinator: NSObject, DataScannerViewControllerDelegate {
+        let onRecognized: (String) -> Void
+        init(onRecognized: @escaping (String) -> Void) { self.onRecognized = onRecognized }
+
+        func dataScanner(_ dataScanner: DataScannerViewController, didTapOn item: RecognizedItem) {
+            if case .text(let t) = item {
+                onRecognized(t.transcript)
+            }
+        }
+    }
 }
