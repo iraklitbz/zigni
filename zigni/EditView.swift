@@ -66,6 +66,14 @@ struct EditView: View {
             .text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
     }
 
+    private func dismissEditing() {
+        focusedPassageID = nil
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+    }
+
     var body: some View {
         ZStack {
             bgColor.ignoresSafeArea()
@@ -148,8 +156,15 @@ struct EditView: View {
                 }
                 .frame(height: 36)
                 .padding(.top, 58)
+                .contentShape(Rectangle())
+                .onTapGesture { dismissEditing() }
                 .animation(.spring(duration: 0.3), value: selectedPassageIDs.isEmpty)
                 .animation(.spring(duration: 0.3), value: keyboardVisible)
+
+                Color.clear
+                    .frame(height: 18)
+                    .contentShape(Rectangle())
+                    .onTapGesture { dismissEditing() }
 
                 // ── Campo: título del libro ───────────────────────────
                 TextField("título del libro", text: $draft.bookTitle)
@@ -185,10 +200,20 @@ struct EditView: View {
                     .padding(.top, 20)
                     .padding(.bottom, 120)
                 }
+                .coordinateSpace(name: "passageScroll")
                 .scrollBounceBehavior(.basedOnSize)
                 .onPreferenceChange(PassageFrameKey.self) { frames in
                     passageFrames = frames
                 }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            let point = value.location
+                            let hitPassage = passageFrames.values.contains { $0.contains(point) }
+                            guard !hitPassage else { return }
+                            dismissEditing()
+                        }
+                )
             }
 
             // ── Barra de pegar (clipboard) ────────────────────────────
@@ -366,7 +391,7 @@ struct EditView: View {
             GeometryReader { geo in
                 Color.clear.preference(
                     key: PassageFrameKey.self,
-                    value: [passage.id: geo.frame(in: .global)]
+                    value: [passage.id: geo.frame(in: .named("passageScroll"))]
                 )
             }
         )
