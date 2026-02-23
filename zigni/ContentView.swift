@@ -14,6 +14,10 @@ struct ContentView: View {
     @State private var hasLaunched = false
     @State private var focusNewTitle = false
 
+    // ── Flip / expansión del dorso ────────────────────────────────────
+    @State private var flippedCardID: Quote.ID? = nil   // qué tarjeta está girada
+    @State private var expandedCardID: Quote.ID? = nil  // qué tarjeta está expandida a pantalla completa
+
     private let bgColor     = Color(red: 0.071, green: 0.059, blue: 0.051)
     private let accentColor = Color(red: 0.48,  green: 0.384, blue: 0.282)
 
@@ -32,7 +36,8 @@ struct ContentView: View {
                             SwipeableCard(
                                 cardWidth: geo.size.width,
                                 canSwipe: quote.id != newQuoteID,
-                                bookTitle: quote.bookTitle
+                                bookTitle: quote.bookTitle,
+                                isFlipped: flipBinding(for: quote.id)
                             ) {
                                 if quote.id == newQuoteID {
                                     EditableCardView(
@@ -87,6 +92,23 @@ struct ContentView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+                // ── Dorso expandido a pantalla completa ───────────────
+                if let eid = expandedCardID,
+                   let eq  = store.quotes.first(where: { $0.id == eid }) {
+                    ExpandedCardBack(bookTitle: eq.bookTitle) {
+                        withAnimation(.spring(duration: 0.55, bounce: 0.3)) {
+                            flippedCardID  = nil
+                            expandedCardID = nil
+                        }
+                    }
+                    .ignoresSafeArea()
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.88, anchor: .center).combined(with: .opacity),
+                        removal:   .scale(scale: 0.88, anchor: .bottom).combined(with: .opacity)
+                    ))
+                    .zIndex(10)
+                }
+
                 // ── Botón "+" ─────────────────────────────────────────
                 if newQuoteID == nil && editingQuote == nil {
                     VStack {
@@ -118,6 +140,22 @@ struct ContentView: View {
                 enterCreateMode()
             }
         }
+        // Cuando una tarjeta se gira al dorso → esperamos a que el flip 3D casi termine
+        // y entonces expandimos a pantalla completa
+        .onChange(of: flippedCardID) { _, newID in
+            if let newID {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.42) {
+                    guard flippedCardID == newID else { return }
+                    withAnimation(.spring(duration: 0.48, bounce: 0.22)) {
+                        expandedCardID = newID
+                    }
+                }
+            } else {
+                withAnimation(.spring(duration: 0.38)) {
+                    expandedCardID = nil
+                }
+            }
+        }
         .onChange(of: scrolledID) { _, newID in
             guard let createID = newQuoteID, newID != createID else { return }
             commitOrDelete(id: createID)
@@ -137,6 +175,15 @@ struct ContentView: View {
             .presentationDragIndicator(.hidden)
             .presentationCornerRadius(28)
         }
+    }
+
+    // MARK: - Flip binding
+
+    private func flipBinding(for id: Quote.ID) -> Binding<Bool> {
+        Binding(
+            get: { flippedCardID == id },
+            set: { flippedCardID = $0 ? id : nil }
+        )
     }
 
     // MARK: - Modo creación
