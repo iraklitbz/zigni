@@ -51,6 +51,12 @@ struct EditView: View {
     var body: some View {
         ZStack {
             bgColor.ignoresSafeArea()
+                .onTapGesture {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder),
+                        to: nil, from: nil, for: nil
+                    )
+                }
 
             VStack(alignment: .leading, spacing: 0) {
 
@@ -146,6 +152,13 @@ struct EditView: View {
                     }
                     .padding(.top, 20)
                     .padding(.bottom, 120)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil
+                        )
+                    }
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .onPreferenceChange(PassageFrameKey.self) { frames in
